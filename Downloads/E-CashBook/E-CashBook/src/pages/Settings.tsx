@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Save, Store, Palette, Database, Download, Upload, Trash2, Bell } from 'lucide-react';
+import { Save, Store, Palette, Database, Download, Upload, Trash2, Bell, Lock } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Settings as SettingsType } from '../lib/types';
 import { Card, Button, Input, Field, Select, Spinner } from '../components/ui';
@@ -12,6 +12,7 @@ export function Settings() {
   const [form, setForm] = useState<Partial<SettingsType>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [showPw, setShowPw] = useState(false);
 
   useEffect(() => {
     if (settings) setForm(settings);
@@ -149,6 +150,27 @@ export function Settings() {
           <Button variant="ghost" onClick={() => alert('Import feature: use the exported CSV to restore data manually.')}><Upload size={16} /> Import Data</Button>
           <Button variant="danger" onClick={resetDB}><Trash2 size={16} /> Reset Database</Button>
         </div>
+      </Card>
+
+      {/* Security */}
+      <Card className="p-5">
+        <div className="flex items-center gap-2 mb-4">
+          <Lock size={20} className="text-sky-600" />
+          <h3 className="font-bold">Admin Security</h3>
+        </div>
+        <Field label="Admin Password">
+          <Input
+            type={showPw ? 'text' : 'password'}
+            value={form.admin_password || ''}
+            onChange={(e) => setForm((f) => ({ ...f, admin_password: e.target.value }))}
+            placeholder="Admin dashboard password"
+          />
+          <div className="flex items-center gap-2 mt-2">
+            <input type="checkbox" id="showPw" checked={showPw} onChange={(e) => setShowPw(e.target.checked)} className="rounded" />
+            <label htmlFor="showPw" className="text-xs text-slate-500">Show password</label>
+          </div>
+          <p className="text-xs text-slate-500 mt-1">This password protects all admin pages (Dashboard, Reports, Workers, Settings, etc.). Salesmen access the app without a password.</p>
+        </Field>
       </Card>
 
       {/* Save button */}

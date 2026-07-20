@@ -2,6 +2,17 @@ export type OrderStatus = 'pending' | 'cutting' | 'stitching' | 'ready' | 'deliv
 
 export type SaleType = 'tailoring' | 'readymade' | 'fabric';
 
+export type OrderPaymentStatus = 'unpaid' | 'paid_in_full' | 'outstanding' | 'written_off';
+
+export type DeliveryPaymentMethod = 'cash' | 'bank' | 'pos' | 'other';
+
+export type LossReason =
+  | 'Customer Discount'
+  | 'Late Delivery Compensation'
+  | 'Design Issue'
+  | 'Customer Complaint'
+  | 'Other';
+
 export type WorkerCategory = 'cutting' | 'embroidery' | 'rhinestone' | 'stitching';
 
 export interface Settings {
@@ -17,6 +28,7 @@ export interface Settings {
   logo: string;
   reminder_days: number;
   opening_cash: number;
+  admin_password: string;
 }
 
 export interface Worker {
@@ -29,6 +41,7 @@ export interface Worker {
   status: string;
   monthly_salary: number;
   created_at: string;
+  shop_id: string | null;
 }
 
 export interface WorkerDesign {
@@ -65,6 +78,8 @@ export interface WorkerFinalPayment {
   remarks: string;
   payment_date: string;
   created_at: string;
+  shop_id: string | null;
+  payment_account_id: string | null;
 }
 
 export interface WorkerAdvance {
@@ -74,6 +89,8 @@ export interface WorkerAdvance {
   advance_date: string;
   remarks: string;
   created_at: string;
+  shop_id: string | null;
+  payment_account_id: string | null;
 }
 
 export interface Salesman {
@@ -86,6 +103,7 @@ export interface Salesman {
   status: string;
   share_token: string;
   created_at: string;
+  shop_id: string | null;
 }
 
 export interface SalesmanLedgerEntry {
@@ -96,6 +114,8 @@ export interface SalesmanLedgerEntry {
   remarks: string;
   type: 'advance' | 'payment';
   created_at: string;
+  shop_id: string | null;
+  payment_account_id: string | null;
 }
 
 export interface SalesmanAdvance {
@@ -105,6 +125,8 @@ export interface SalesmanAdvance {
   advance_date: string;
   remarks: string;
   created_at: string;
+  shop_id: string | null;
+  payment_account_id: string | null;
 }
 
 export interface Order {
@@ -127,8 +149,19 @@ export interface Order {
   remarks: string;
   status: OrderStatus;
   sale_type: SaleType;
+  shop_id: string | null;
+  payment_account_id: string | null;
   created_at: string;
   updated_at: string;
+  // Delivery payment confirmation & loss tracking
+  customer_paid_now: number;
+  remaining_balance: number;
+  payment_status: OrderPaymentStatus;
+  loss_amount: number;
+  loss_reason: string;
+  write_off: boolean;
+  delivered_date: string | null;
+  payment_method: string;
 }
 
 export interface OrderWorker {
@@ -163,5 +196,48 @@ export interface CashbookEntry {
   amount: number;
   notes: string;
   attachment: string;
+  shop_id: string | null;
+  payment_account_id: string | null;
   created_at: string;
+}
+
+export type PaymentAccountType = 'cash' | 'bank' | 'pos';
+export type PaymentAccountStatus = 'available' | 'disabled';
+
+export interface Shop {
+  id: string;
+  name: string;
+  address: string;
+  phone: string;
+  status: 'active' | 'disabled';
+  created_at: string;
+}
+
+export interface PaymentAccount {
+  id: string;
+  shop_id: string;
+  type: PaymentAccountType;
+  name: string;
+  bank_name: string;
+  account_number: string;
+  pos_machine_id: string;
+  status: PaymentAccountStatus;
+  created_at: string;
+  shop?: Shop;
+}
+
+export interface MoneyTransaction {
+  id: string;
+  shop_id: string;
+  payment_account_id: string;
+  direction: 'in' | 'out';
+  amount: number;
+  source_type: 'order' | 'sale' | 'salary' | 'expense' | 'advance' | 'manual';
+  source_id: string | null;
+  category: string;
+  notes: string;
+  entry_date: string;
+  created_at: string;
+  shop?: Shop;
+  payment_account?: PaymentAccount;
 }

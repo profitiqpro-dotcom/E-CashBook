@@ -2,10 +2,12 @@ import { useEffect, useState } from 'react';
 import { Plus, UserSquare2, ChevronRight, Link as LinkIcon, DollarSign, Copy, Pencil, Trash2, Banknote } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { Salesman, SalesmanLedgerEntry, SalesmanAdvance, Order } from '../lib/types';
-import { Card, Button, Input, Select, Field, Modal, EmptyState, Spinner, Badge } from '../components/ui';
+import { Card, Button, Input, Select, Field, Modal, EmptyState, Spinner, Badge, PaymentAccountSelect } from '../components/ui';
 import { fmtMoney, fmtDate, todayISO } from '../lib/format';
-import { useSettings } from '../lib/store';
+import { useSettings, useSelectedBranch, filterByBranch } from '../lib/store';
 import { navigate } from '../lib/router';
+import { usePaymentAccounts } from '../lib/hooks';
+import { recordTransaction } from '../lib/transactions';
 
 export function Salesmen() {
   const [salesmen, setSalesmen] = useState<Salesman[]>([]);
@@ -15,6 +17,8 @@ export function Salesmen() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Salesman | null>(null);
   const [q, setQ] = useState('');
+  const { branch } = useSelectedBranch();
+  const { shops } = usePaymentAccounts();
 
   function refresh() {
     Promise.all([
@@ -26,7 +30,7 @@ export function Salesmen() {
 
   useEffect(() => { refresh(); }, []);
 
-  const filtered = salesmen.filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
+  const filtered = filterByBranch(salesmen, branch).filter((s) => s.name.toLowerCase().includes(q.toLowerCase()));
 
   return (
     <div className="space-y-4 animate-fade">
@@ -58,7 +62,10 @@ export function Salesmen() {
                   )}
                   <div className="flex-1 min-w-0">
                     <p className="font-bold text-sm truncate">{s.name}</p>
-                    <Badge color={s.status === 'active' ? 'green' : 'slate'}>{s.status}</Badge>
+                    <div className="flex items-center gap-1.5 flex-wrap">
+                      <Badge color={s.status === 'active' ? 'green' : 'slate'}>{s.status}</Badge>
+                      {s.shop_id && <Badge color="blue">{shops.find((sh) => sh.id === s.shop_id)?.name || 'Branch'}</Badge>}
+                    </div>
                   </div>
                   <ChevronRight size={18} className="text-slate-400" />
                 </div>
@@ -79,18 +86,18 @@ export function Salesmen() {
         </div>
       )}
 
-      {formOpen && <SalesmanForm salesman={editing} onClose={() => setFormOpen(false)} onSaved={() => { setFormOpen(false); refresh(); }} />}
+      {formOpen && <SalesmanForm salesman={editing} shops={shops} onClose={() => setFormOpen(false)} onSaved={() => { setFormOpen(false); refresh(); }} />}
     </div>
   );
 }
 
-function SalesmanForm({ salesman, onClose, onSaved }: { salesman: Salesman | null; onClose: () => void; onSaved: () => void }) {
+function SalesmanForm({ salesman, shops, onClose, onSaved }: { salesman: Salesman | null; shops: { id: string; name: string }[]; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<Partial<Salesman>>({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     if (salesman) setForm(salesman);
-    else setForm({ name: '', whatsapp: '', monthly_salary: 0, commission: 0, status: 'active', photo: '' });
+    else setForm({ name: '', whatsapp: '', monthly_salary: 0, commission: 0, status: 'active', photo: '', shop_id: null });
   }, [salesman]);
 
   async function uploadPhoto(file: File) {
@@ -107,6 +114,7 @@ function SalesmanForm({ salesman, onClose, onSaved }: { salesman: Salesman | nul
     const payload = {
       name: form.name, whatsapp: form.whatsapp, monthly_salary: Number(form.monthly_salary) || 0,
       commission: Number(form.commission) || 0, status: form.status, photo: form.photo,
+      shop_id: form.shop_id || null,
     };
     if (salesman) {
       await supabase.from('salesmen').update(payload).eq('id', salesman.id);
@@ -119,7 +127,15 @@ function SalesmanForm({ salesman, onClose, onSaved }: { salesman: Salesman | nul
   }
 
   return (
-    <Modal open={true} onClose={onClose} title={salesman ? 'Edit Salesman' : 'Add Salesman'}>
+    <Modal
+      open={true} onClose={onClose} title={salesman ? 'Edit Salesman' : 'Add Salesman'}
+      footer={
+        <div className="flex flex-col sm:flex-row justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving || !form.name}>{saving ? 'Saving…' : 'Save'}</Button>
+        </div>
+      }
+    >
       <div className="space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <Field label="Name *"><Input value={form.name || ''} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="Salesman name" /></Field>
@@ -132,15 +148,17 @@ function SalesmanForm({ salesman, onClose, onSaved }: { salesman: Salesman | nul
               <option value="inactive">Inactive</option>
             </Select>
           </Field>
+          <Field label="Branch">
+            <Select value={form.shop_id || ''} onChange={(e) => setForm((f) => ({ ...f, shop_id: e.target.value || null }))}>
+              <option value="">Unassigned (all branches)</option>
+              {shops.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+            </Select>
+          </Field>
         </div>
         <Field label="Photo">
           <input type="file" accept="image/*" onChange={(e) => e.target.files?.[0] && uploadPhoto(e.target.files[0])} className="text-sm w-full file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:bg-sky-50 file:text-sky-700 file:font-semibold hover:file:bg-sky-100 cursor-pointer" />
           {form.photo && <img src={form.photo} alt="" className="w-16 h-16 rounded-full object-cover mt-2" />}
         </Field>
-        <div className="flex flex-col sm:flex-row justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={saving || !form.name}>{saving ? 'Saving…' : 'Save'}</Button>
-        </div>
       </div>
     </Modal>
   );
@@ -158,6 +176,7 @@ export function SalesmanProfile({ id }: { id: string }) {
   const [advanceForm, setAdvanceForm] = useState(false);
   const [editForm, setEditForm] = useState(false);
   const [loading, setLoading] = useState(true);
+  const { shops } = usePaymentAccounts();
 
   function refresh() {
     Promise.all([
@@ -326,23 +345,29 @@ export function SalesmanProfile({ id }: { id: string }) {
         </div>
       )}
 
-      {editForm && <SalesmanForm salesman={salesman} onClose={() => setEditForm(false)} onSaved={() => { setEditForm(false); refresh(); }} />}
+      {editForm && <SalesmanForm salesman={salesman} shops={shops} onClose={() => setEditForm(false)} onSaved={() => { setEditForm(false); refresh(); }} />}
     </div>
   );
 }
 
 function LedgerForm({ salesmanId, salesmanName, onClose, onSaved }: { salesmanId: string; salesmanName: string; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<Partial<SalesmanLedgerEntry>>({ amount: 0, payment_date: todayISO(), remarks: '' });
+  const [paymentAccountId, setPaymentAccountId] = useState('');
   const [saving, setSaving] = useState(false);
+  const { shops, accounts } = usePaymentAccounts();
+
+  useEffect(() => { if (!paymentAccountId && accounts.length > 0) setPaymentAccountId(accounts[0].id); }, [accounts]);
 
   async function save() {
     setSaving(true);
+    const account = accounts.find((a) => a.id === paymentAccountId);
     const { data } = await supabase.from('salesman_salary_ledger').insert({
       salesman_id: salesmanId,
       amount: Number(form.amount) || 0,
       payment_date: form.payment_date,
       remarks: form.remarks,
       type: 'payment',
+      shop_id: account?.shop_id || null, payment_account_id: account?.id || null,
     }).select('*').maybeSingle();
 
     // Create matching cashbook entry (cash-out)
@@ -351,23 +376,39 @@ function LedgerForm({ salesmanId, salesmanName, onClose, onSaved }: { salesmanId
         id: data.id, entry_date: form.payment_date, type: 'expense',
         category: 'salesman_salary', amount: Number(form.amount) || 0,
         notes: `Salary payment: ${salesmanName}`,
+        shop_id: account?.shop_id || null, payment_account_id: account?.id || null,
       });
+      if (account) {
+        await recordTransaction({
+          shop_id: account.shop_id, payment_account_id: account.id,
+          direction: 'out', amount: Number(form.amount) || 0,
+          source_type: 'salary', source_id: data.id,
+          category: 'salesman_salary', notes: `Salary payment: ${salesmanName}`, entry_date: form.payment_date,
+        });
+      }
     }
     setSaving(false);
     onSaved();
   }
 
   return (
-    <Modal open={true} onClose={onClose} title="Record Salary Payment">
-      <div className="space-y-3">
-        <Field label="Amount"><Input type="number" step="0.001" value={form.amount ?? 0} onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))} /></Field>
-        <Field label="Date"><Input type="date" value={form.payment_date || ''} onChange={(e) => setForm((f) => ({ ...f, payment_date: e.target.value }))} /></Field>
-        <Field label="Remarks"><Input value={form.remarks || ''} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} /></Field>
-        <p className="text-xs text-slate-500">This will automatically create a cash-out entry in the Cashbook.</p>
+    <Modal
+      open={true} onClose={onClose} title="Record Salary Payment"
+      footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
         </div>
+      }
+    >
+      <div className="space-y-3">
+        <Field label="Amount"><Input type="number" step="0.001" value={form.amount ?? 0} onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))} /></Field>
+        <Field label="Date"><Input type="date" value={form.payment_date || ''} onChange={(e) => setForm((f) => ({ ...f, payment_date: e.target.value }))} /></Field>
+        <Field label="Paid From">
+          <PaymentAccountSelect shops={shops} accounts={accounts} value={paymentAccountId} onChange={setPaymentAccountId} />
+        </Field>
+        <Field label="Remarks"><Input value={form.remarks || ''} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} /></Field>
+        <p className="text-xs text-slate-500">This will automatically create a cash-out entry in the Cashbook.</p>
       </div>
     </Modal>
   );
@@ -375,15 +416,21 @@ function LedgerForm({ salesmanId, salesmanName, onClose, onSaved }: { salesmanId
 
 function SalesmanAdvanceForm({ salesmanId, salesmanName, onClose, onSaved }: { salesmanId: string; salesmanName: string; onClose: () => void; onSaved: () => void }) {
   const [form, setForm] = useState<Partial<SalesmanAdvance>>({ amount: 0, advance_date: todayISO(), remarks: '' });
+  const [paymentAccountId, setPaymentAccountId] = useState('');
   const [saving, setSaving] = useState(false);
+  const { shops, accounts } = usePaymentAccounts();
+
+  useEffect(() => { if (!paymentAccountId && accounts.length > 0) setPaymentAccountId(accounts[0].id); }, [accounts]);
 
   async function save() {
     setSaving(true);
+    const account = accounts.find((a) => a.id === paymentAccountId);
     const { data } = await supabase.from('salesman_advances').insert({
       salesman_id: salesmanId,
       amount: Number(form.amount) || 0,
       advance_date: form.advance_date,
       remarks: form.remarks,
+      shop_id: account?.shop_id || null, payment_account_id: account?.id || null,
     }).select('*').maybeSingle();
 
     // Create matching cashbook entry (cash-out)
@@ -392,23 +439,39 @@ function SalesmanAdvanceForm({ salesmanId, salesmanName, onClose, onSaved }: { s
         id: data.id, entry_date: form.advance_date, type: 'expense',
         category: 'salesman_advance', amount: Number(form.amount) || 0,
         notes: `Advance to ${salesmanName}`,
+        shop_id: account?.shop_id || null, payment_account_id: account?.id || null,
       });
+      if (account) {
+        await recordTransaction({
+          shop_id: account.shop_id, payment_account_id: account.id,
+          direction: 'out', amount: Number(form.amount) || 0,
+          source_type: 'advance', source_id: data.id,
+          category: 'salesman_advance', notes: `Advance to ${salesmanName}`, entry_date: form.advance_date,
+        });
+      }
     }
     setSaving(false);
     onSaved();
   }
 
   return (
-    <Modal open={true} onClose={onClose} title="Salary Advance">
-      <div className="space-y-3">
-        <Field label="Amount"><Input type="number" step="0.001" value={form.amount ?? 0} onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))} /></Field>
-        <Field label="Date"><Input type="date" value={form.advance_date || ''} onChange={(e) => setForm((f) => ({ ...f, advance_date: e.target.value }))} /></Field>
-        <Field label="Remarks"><Input value={form.remarks || ''} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} /></Field>
-        <p className="text-xs text-slate-500">This will automatically create a cash-out entry in the Cashbook.</p>
+    <Modal
+      open={true} onClose={onClose} title="Salary Advance"
+      footer={
         <div className="flex justify-end gap-2">
           <Button variant="ghost" onClick={onClose}>Cancel</Button>
           <Button onClick={save} disabled={saving}>{saving ? 'Saving…' : 'Save'}</Button>
         </div>
+      }
+    >
+      <div className="space-y-3">
+        <Field label="Amount"><Input type="number" step="0.001" value={form.amount ?? 0} onChange={(e) => setForm((f) => ({ ...f, amount: Number(e.target.value) }))} /></Field>
+        <Field label="Date"><Input type="date" value={form.advance_date || ''} onChange={(e) => setForm((f) => ({ ...f, advance_date: e.target.value }))} /></Field>
+        <Field label="Paid From">
+          <PaymentAccountSelect shops={shops} accounts={accounts} value={paymentAccountId} onChange={setPaymentAccountId} />
+        </Field>
+        <Field label="Remarks"><Input value={form.remarks || ''} onChange={(e) => setForm((f) => ({ ...f, remarks: e.target.value }))} /></Field>
+        <p className="text-xs text-slate-500">This will automatically create a cash-out entry in the Cashbook.</p>
       </div>
     </Modal>
   );

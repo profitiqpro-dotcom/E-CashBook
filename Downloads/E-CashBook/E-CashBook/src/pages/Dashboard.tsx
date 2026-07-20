@@ -1,22 +1,38 @@
 import { useMemo } from 'react';
+import { useEffect, useState } from 'react';
 import {
   ShoppingBag, DollarSign, TrendingUp, TrendingDown, Wallet,
   Clock, CheckCircle2, Truck, Search as SearchIcon, Package,
   Scissors, Shirt, Banknote, ArrowDownCircle, ArrowUpCircle,
+  AlertOctagon, PercentCircle, History,
 } from 'lucide-react';
 import { StatCard, Card, Spinner, Badge } from '../components/ui';
 import { BarChart, LineChart, DonutChart } from '../components/charts';
 import { useDashboardData, computeStats, lastNMonths, monthKey, monthLabel } from '../lib/hooks';
 import { fmtMoney, fmtDate } from '../lib/format';
-import { useSettings } from '../lib/store';
+import { useSettings, useSelectedBranch, filterByBranch } from '../lib/store';
 import { navigate } from '../lib/router';
-import type { Order } from '../lib/types';
+import { supabase } from '../lib/supabase';
+import type { MoneyTransaction, Order } from '../lib/types';
 
 export function Dashboard({ searchQuery }: { searchQuery: string }) {
-  const data = useDashboardData();
+  const raw = useDashboardData();
   const settings = useSettings();
   const currency = settings?.currency || 'OMR';
   const openingCash = Number(settings?.opening_cash ?? 0);
+  const { branch } = useSelectedBranch();
+
+  // Scope every dataset to the branch picked in the header switcher before anything derives from it.
+  const data = useMemo(() => ({
+    ...raw,
+    orders: filterByBranch(raw.orders, branch),
+    workers: filterByBranch(raw.workers, branch),
+    salesmen: filterByBranch(raw.salesmen, branch),
+    workerAdvances: filterByBranch(raw.workerAdvances, branch),
+    salaryLedger: filterByBranch(raw.salaryLedger, branch),
+    salesmanAdvances: filterByBranch(raw.salesmanAdvances, branch),
+    cashbook: filterByBranch(raw.cashbook, branch),
+  }), [raw, branch]);
 
   const stats = useMemo(() => computeStats(data, openingCash), [data, openingCash]);
 
@@ -165,6 +181,17 @@ export function Dashboard({ searchQuery }: { searchQuery: string }) {
         </div>
       </div>
 
+      {/* Delivery Payment & Loss Tracking */}
+      <div>
+        <h2 className="text-lg font-bold mb-3">Delivery Payments &amp; Loss Tracking</h2>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard label="Cash Received" value={fmtMoney(stats.cashReceived, currency)} icon={<Banknote size={18} />} accent="emerald" />
+          <StatCard label="Outstanding Receivables" value={fmtMoney(stats.outstandingReceivables, currency)} icon={<Clock size={18} />} accent="amber" onClick={() => navigate('/orders')} />
+          <StatCard label="Total Loss / Write-offs" value={fmtMoney(stats.totalLossWriteOffs, currency)} icon={<AlertOctagon size={18} />} accent="rose" />
+          <StatCard label="Discounts Given" value={fmtMoney(stats.discountsGiven, currency)} icon={<PercentCircle size={18} />} accent="violet" />
+        </div>
+      </div>
+
       {/* Order Status Cards */}
       <div>
         <h2 className="text-lg font-bold mb-3">Order Status</h2>
@@ -221,7 +248,56 @@ export function Dashboard({ searchQuery }: { searchQuery: string }) {
           ]}
         />
       </Card>
+
+      <PaymentCollectionHistory currency={currency} branch={branch} />
     </div>
+  );
+}
+
+function PaymentCollectionHistory({ currency, branch }: { currency: string; branch: string }) {
+  const [txns, setTxns] = useState<MoneyTransaction[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    setLoading(true);
+    let query = supabase
+      .from('money_transactions')
+      .select('*')
+      .eq('category', 'delivered_payment');
+    if (branch !== 'all') query = query.eq('shop_id', branch);
+    query
+      .order('created_at', { ascending: false })
+      .limit(15)
+      .then(({ data }) => {
+        setTxns((data as MoneyTransaction[]) || []);
+        setLoading(false);
+      });
+  }, [branch]);
+
+  return (
+    <Card className="p-0 overflow-hidden">
+      <div className="p-4 border-b border-slate-200 dark:border-slate-800 flex items-center gap-2">
+        <History size={18} className="text-sky-600" />
+        <h3 className="font-bold">Payment Collection History</h3>
+      </div>
+      {loading ? (
+        <div className="flex justify-center py-8"><Spinner className="text-sky-600" /></div>
+      ) : txns.length === 0 ? (
+        <p className="p-8 text-center text-slate-500 text-sm">No delivery payments recorded yet</p>
+      ) : (
+        <div className="divide-y divide-slate-100 dark:divide-slate-800">
+          {txns.map((t) => (
+            <div key={t.id} className="p-3 flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm font-semibold truncate">{t.notes || 'Delivery payment'}</p>
+                <p className="text-xs text-slate-500">{fmtDate(t.entry_date)}</p>
+              </div>
+              <p className="font-bold text-emerald-600 flex-shrink-0">{fmtMoney(t.amount, currency)}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
   );
 }
 

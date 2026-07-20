@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
 import { supabase, RECEIPTS_BUCKET } from '../lib/supabase';
 import type { Order, Salesman, Worker, WorkerCategory, WorkerDesign, OrderWorker, SaleType, OrderStatus } from '../lib/types';
-import { Modal, Field, Input, Textarea, Select, Button, Label } from './ui';
+import { Modal, Field, Input, Textarea, Select, Button, Label, PaymentAccountSelect } from './ui';
 import { todayISO, fmtMoney } from '../lib/format';
+import { usePaymentAccounts } from '../lib/hooks';
+import { recordTransaction } from '../lib/transactions';
 
 const CATEGORIES: { value: WorkerCategory; label: string }[] = [
   { value: 'cutting', label: 'Cutting' },
@@ -48,6 +50,7 @@ export function OrderForm({
   const [designs, setDesigns] = useState<WorkerDesign[]>([]);
   const [uploading, setUploading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const { shops, accounts } = usePaymentAccounts();
 
   useEffect(() => {
     supabase.from('worker_designs').select('*').then(({ data }) => {
@@ -74,10 +77,18 @@ export function OrderForm({
         order_date: todayISO(), delivery_date: '', total_amount: 0, advance: 0,
         additional_payment: 0, measurement: '', notes: '', remarks: '',
         priority: 'normal', status: 'pending', sale_type: 'tailoring',
+        payment_account_id: null,
       });
       setAssignments([]);
     }
   }, [order, open]);
+
+  // Default to the first available payment account once accounts have loaded (new orders only)
+  useEffect(() => {
+    if (!order && open && !form.payment_account_id && accounts.length > 0) {
+      setForm((f) => ({ ...f, payment_account_id: accounts[0].id }));
+    }
+  }, [accounts, order, open]);
 
   const set = (k: keyof Order, v: any) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -113,6 +124,7 @@ export function OrderForm({
 
   async function save() {
     setSaving(true);
+    const selectedAccount = accounts.find((a) => a.id === form.payment_account_id);
     const payload: any = {
       receipt_number: form.receipt_number, customer_name: form.customer_name,
       whatsapp_number: form.whatsapp_number || '', order_type: form.order_type || '',
@@ -123,12 +135,20 @@ export function OrderForm({
       receipt_image: form.receipt_image || '', salesman_id: form.salesman_id || null,
       priority: form.priority || 'normal', status: form.status || 'pending',
       sale_type: form.sale_type || 'tailoring', updated_at: new Date().toISOString(),
+      payment_account_id: form.payment_account_id || null,
+      shop_id: selectedAccount?.shop_id || null,
     };
 
     const owPayload = assignments.map((a) => ({
       worker_id: a.worker_id, category: a.category, design_number: a.design_number || '',
       quantity: Number(a.quantity) || 1, rate: Number(a.rate) || 0, submitted: false,
     }));
+
+    // Money in from this order = advance + additional_payment (readymade/fabric sales
+    // are entered entirely as `total_amount` with `advance` covering the full sale).
+    const newMoneyIn = (Number(form.advance) || 0) + (Number(form.additional_payment) || 0);
+    const prevMoneyIn = order ? Number(order.advance) + Number(order.additional_payment || 0) : 0;
+    const delta = newMoneyIn - prevMoneyIn;
 
     if (order) {
       await supabase.from('orders').update(payload).eq('id', order.id);
@@ -138,6 +158,15 @@ export function OrderForm({
       });
       for (const a of owPayload) {
         await supabase.from('order_workers').insert({ ...a, order_id: order.id });
+      }
+      if (selectedAccount && Math.abs(delta) > 0.0001) {
+        await recordTransaction({
+          shop_id: selectedAccount.shop_id, payment_account_id: selectedAccount.id,
+          direction: delta > 0 ? 'in' : 'out', amount: Math.abs(delta),
+          source_type: 'order', source_id: order.id,
+          category: form.sale_type === 'tailoring' ? 'order_payment' : `${form.sale_type}_sale`,
+          notes: `${order.receipt_number} · ${order.customer_name}`,
+        });
       }
     } else {
       const { data } = await supabase.from('orders').insert(payload).select('*').maybeSingle();
@@ -153,6 +182,15 @@ export function OrderForm({
             order_id: newOrder.id, action: 'Worker Assigned', detail: `${a.category}: ${w?.name || ''}`, person: 'Admin',
           });
         }
+        if (selectedAccount && newMoneyIn > 0.0001) {
+          await recordTransaction({
+            shop_id: selectedAccount.shop_id, payment_account_id: selectedAccount.id,
+            direction: 'in', amount: newMoneyIn,
+            source_type: 'order', source_id: newOrder.id,
+            category: form.sale_type === 'tailoring' ? 'order_payment' : `${form.sale_type}_sale`,
+            notes: `${newOrder.receipt_number} · ${newOrder.customer_name}`,
+          });
+        }
       }
     }
 
@@ -165,7 +203,17 @@ export function OrderForm({
   const isTailoring = (form.sale_type || 'tailoring') === 'tailoring';
 
   return (
-    <Modal open={open} onClose={onClose} title={order ? 'Edit Order' : 'New Order'} size="lg">
+    <Modal
+      open={open} onClose={onClose} title={order ? 'Edit Order' : 'New Order'} size="lg"
+      footer={
+        <div className="flex flex-col sm:flex-row justify-end gap-2">
+          <Button variant="ghost" onClick={onClose}>Cancel</Button>
+          <Button onClick={save} disabled={saving || !form.receipt_number || !form.customer_name}>
+            {saving ? 'Saving…' : order ? 'Update Order' : 'Create Order'}
+          </Button>
+        </div>
+      }
+    >
       <div className="space-y-4">
         <div>
           <Label>Sale Type</Label>
@@ -197,6 +245,11 @@ export function OrderForm({
           <Field label="Advance Paid"><Input type="number" step="0.001" value={form.advance ?? 0} onChange={(e) => set('advance', e.target.value)} /></Field>
           <Field label="Additional Payment"><Input type="number" step="0.001" value={form.additional_payment ?? 0} onChange={(e) => set('additional_payment', e.target.value)} /></Field>
         </div>
+
+        <Field label="Payment Account">
+          <PaymentAccountSelect shops={shops} accounts={accounts} value={form.payment_account_id || ''} onChange={(v) => set('payment_account_id', v || null)} />
+          <p className="text-xs text-slate-500 mt-1">Where the advance / additional payment money is taken.</p>
+        </Field>
 
         <Field label="Remaining Balance (auto)"><Input value={balance.toFixed(3)} disabled className="bg-slate-50 dark:bg-slate-900" /></Field>
 
@@ -285,13 +338,6 @@ export function OrderForm({
             {form.receipt_image && <img src={form.receipt_image} alt="Receipt" className="w-16 h-16 rounded-lg object-cover border" />}
           </div>
         </Field>
-
-        <div className="flex flex-col sm:flex-row justify-end gap-2 pt-3 border-t border-slate-200 dark:border-slate-800">
-          <Button variant="ghost" onClick={onClose}>Cancel</Button>
-          <Button onClick={save} disabled={saving || !form.receipt_number || !form.customer_name}>
-            {saving ? 'Saving…' : order ? 'Update Order' : 'Create Order'}
-          </Button>
-        </div>
       </div>
     </Modal>
   );

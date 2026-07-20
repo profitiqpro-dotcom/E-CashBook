@@ -1,22 +1,24 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard, ShoppingBag, Bell, Users, UserSquare2, BookOpen, FileBarChart, Settings as SettingsIcon,
-  Menu, X, Moon, Sun, Calendar, Search, ChevronLeft, ChevronRight, Scissors,
+  Menu, X, Moon, Sun, Calendar, Search, ChevronLeft, ChevronRight, Scissors, LogOut, Wallet, Store,
 } from 'lucide-react';
 import { useRoute, navigate } from '../lib/router';
-import { useSettings, useDarkMode } from '../lib/store';
+import { useSettings, useDarkMode, useSelectedBranch } from '../lib/store';
+import { useAdminAuth } from '../lib/auth';
 import { fmtDate, todayISO, daysUntil } from '../lib/format';
 import { supabase } from '../lib/supabase';
-import type { Order } from '../lib/types';
+import type { Order, Shop } from '../lib/types';
 
 const NAV = [
-  { name: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/' },
+  { name: 'dashboard', label: 'Dashboard', icon: LayoutDashboard, path: '/dashboard' },
   { name: 'orders', label: 'Orders', icon: ShoppingBag, path: '/orders' },
   { name: 'alerts', label: 'Alerts', icon: Bell, path: '/alerts' },
   { name: 'workers', label: 'Workers', icon: Users, path: '/workers' },
   { name: 'salesmen', label: 'Salesmen', icon: UserSquare2, path: '/salesmen' },
   { name: 'cashbook', label: 'Cashbook', icon: BookOpen, path: '/cashbook' },
   { name: 'reports', label: 'Reports', icon: FileBarChart, path: '/reports' },
+  { name: 'payment-accounts', label: 'Payment Accounts', icon: Wallet, path: '/payment-accounts' },
   { name: 'settings', label: 'Settings', icon: SettingsIcon, path: '/settings' },
 ] as const;
 
@@ -24,11 +26,14 @@ export function Layout({ children, onSearch }: { children: React.ReactNode; onSe
   const route = useRoute();
   const settings = useSettings();
   const { dark, toggle } = useDarkMode();
+  const { logout } = useAdminAuth();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const [orders, setOrders] = useState<Order[]>([]);
+  const [shops, setShops] = useState<Shop[]>([]);
+  const { branch, setBranch } = useSelectedBranch();
 
   useEffect(() => {
     supabase
@@ -37,6 +42,11 @@ export function Layout({ children, onSearch }: { children: React.ReactNode; onSe
       .neq('status', 'delivered')
       .then(({ data }) => data && setOrders(data as Order[]));
   }, [route]);
+
+  useEffect(() => {
+    supabase.from('shops').select('*').eq('status', 'active').order('created_at')
+      .then(({ data }) => setShops((data as Shop[]) || []));
+  }, []);
 
   useEffect(() => {
     const t = setTimeout(() => onSearch?.(searchQ), 250);
@@ -60,7 +70,7 @@ export function Layout({ children, onSearch }: { children: React.ReactNode; onSe
     <div className="min-h-screen bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 lg:flex">
       {/* Sidebar */}
       <aside
-        className={`fixed lg:sticky top-0 left-0 z-40 h-screen w-64 flex-shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-transform ${
+        className={`fixed lg:sticky top-0 left-0 z-40 h-screen w-64 lg:shrink-0 bg-white dark:bg-slate-900 border-r border-slate-200 dark:border-slate-800 flex flex-col transition-transform ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'
         }`}
       >
@@ -115,6 +125,13 @@ export function Layout({ children, onSearch }: { children: React.ReactNode; onSe
               <p className="text-sm font-semibold truncate">{settings?.owner_name || 'Admin'}</p>
               <p className="text-xs text-slate-500">Administrator</p>
             </div>
+            <button
+              onClick={() => { logout(); navigate('/dashboard'); }}
+              className="ml-auto p-2 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-900/20 transition"
+              title="Admin Logout"
+            >
+              <LogOut size={18} />
+            </button>
           </div>
         </div>
       </aside>
@@ -122,13 +139,29 @@ export function Layout({ children, onSearch }: { children: React.ReactNode; onSe
       {sidebarOpen && <div className="fixed inset-0 z-30 bg-slate-900/50 lg:hidden" onClick={() => setSidebarOpen(false)} />}
 
       {/* Main */}
-      <div className="min-w-0 flex-1">
+      <div className="flex-1 min-w-0">
         {/* Header */}
         <header className="sticky top-0 z-20 bg-white/90 dark:bg-slate-950/90 backdrop-blur border-b border-slate-200 dark:border-slate-800">
           <div className="flex items-center gap-3 px-4 sm:px-6 h-16">
             <button className="lg:hidden text-slate-600 dark:text-slate-300" onClick={() => setSidebarOpen(true)}>
               <Menu size={22} />
             </button>
+
+            {/* Branch switcher */}
+            {shops.length > 0 && (
+              <div className="relative flex items-center gap-1.5 sm:gap-2 pl-1 pr-1.5 sm:pr-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-900">
+                <Store size={16} className="text-sky-600 flex-shrink-0" />
+                <select
+                  value={branch}
+                  onChange={(e) => setBranch(e.target.value)}
+                  className="bg-transparent text-sm font-semibold outline-none max-w-[6rem] sm:max-w-[9rem] truncate cursor-pointer"
+                  title="Filter the whole app by branch"
+                >
+                  <option value="all">All Branches</option>
+                  {shops.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                </select>
+              </div>
+            )}
 
             {/* Universal search */}
             <div className="flex-1 max-w-xl relative">

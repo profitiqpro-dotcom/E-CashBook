@@ -8,6 +8,7 @@ import type { Order, Worker, OrderWorker, TimelineEntry, Salesman, Settings } fr
 import { Modal, Button, Badge, Spinner } from './ui';
 import { StatusBadge } from '../pages/Dashboard';
 import { DigitalReceipt } from './DigitalReceipt';
+import { DeliveryPaymentModal } from './DeliveryPaymentModal';
 import { fmtMoney, fmtDate, fmtDateTime, daysUntil } from '../lib/format';
 
 export function OrderDetail({
@@ -26,6 +27,7 @@ export function OrderDetail({
   const [timeline, setTimeline] = useState<TimelineEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [showImage, setShowImage] = useState(false);
+  const [showDeliveryModal, setShowDeliveryModal] = useState(false);
   const currency = settings?.currency || 'OMR';
   const salesman = salesmen.find((s) => s.id === order.salesman_id);
 
@@ -107,14 +109,6 @@ export function OrderDetail({
     }
   }
 
-  async function markDelivered() {
-    await supabase.from('orders').update({ status: 'delivered', updated_at: new Date().toISOString() }).eq('id', order.id);
-    await supabase.from('order_timeline').insert({
-      order_id: order.id, action: 'Delivered', detail: 'Order delivered to customer', person: 'Admin',
-    });
-    onDeleted();
-  }
-
   async function duplicate() {
     const { data } = await supabase.from('orders').insert({
       receipt_number: `${order.receipt_number}-COPY`,
@@ -188,7 +182,7 @@ export function OrderDetail({
           <MessageCircle size={15} /> WhatsApp
         </Button>
         {order.status !== 'delivered' && (
-          <Button variant="ghost" onClick={markDelivered}><CheckCircle2 size={15} /> Mark Delivered</Button>
+          <Button variant="ghost" onClick={() => setShowDeliveryModal(true)}><CheckCircle2 size={15} /> Mark Delivered</Button>
         )}
         <Button variant="danger" onClick={del}><Trash2 size={15} /> Delete</Button>
       </div>
@@ -221,6 +215,20 @@ export function OrderDetail({
           <DetailRow label="Total" value={fmtMoney(order.total_amount, currency)} />
           <DetailRow label="Advance" value={fmtMoney(order.advance, currency)} />
           <DetailRow label="Balance" value={fmtMoney(order.balance, currency)} />
+          {order.status === 'delivered' && (
+            <>
+              <DetailRow label="Paid at Delivery" value={fmtMoney(order.customer_paid_now, currency)} />
+              <DetailRow label="Payment Status" value={
+                order.payment_status === 'paid_in_full' ? 'Paid in Full'
+                  : order.payment_status === 'outstanding' ? `Outstanding (${fmtMoney(order.remaining_balance, currency)})`
+                  : order.payment_status === 'written_off' ? `Written Off (${fmtMoney(order.loss_amount, currency)})`
+                  : '—'
+              } />
+              {order.write_off && <DetailRow label="Loss Reason" value={order.loss_reason || '—'} />}
+              <DetailRow label="Delivered Date" value={fmtDate(order.delivered_date)} />
+              <DetailRow label="Payment Method" value={order.payment_method || '—'} />
+            </>
+          )}
           <DetailRow label="Salesman" value={salesman?.name || '—'} />
           <DetailRow label="Priority" value={order.priority} />
           {order.measurement && <div className="col-span-2"><DetailRow label="Measurement" value={order.measurement} /></div>}
@@ -289,6 +297,16 @@ export function OrderDetail({
           <button className="absolute top-4 right-4 text-white p-2"><X size={24} /></button>
           <img src={order.receipt_image} alt="Receipt" className="max-w-full max-h-full object-contain rounded-lg" />
         </div>
+      )}
+
+      {/* Delivery payment confirmation */}
+      {showDeliveryModal && (
+        <DeliveryPaymentModal
+          order={order}
+          settings={settings}
+          onClose={() => setShowDeliveryModal(false)}
+          onConfirmed={() => { setShowDeliveryModal(false); onDeleted(); }}
+        />
       )}
     </Modal>
   );

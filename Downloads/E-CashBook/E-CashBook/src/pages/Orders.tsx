@@ -8,7 +8,7 @@ import { OrderForm } from '../components/OrderForm';
 import { OrderDetail } from '../components/OrderDetail';
 import { useDashboardData } from '../lib/hooks';
 import { fmtMoney, fmtDate, daysUntil } from '../lib/format';
-import { useSettings } from '../lib/store';
+import { useSettings, useSelectedBranch, filterByBranch } from '../lib/store';
 
 const STATUS_FILTERS = ['all', 'pending', 'cutting', 'stitching', 'ready', 'delivered'] as const;
 const SALE_TYPE_FILTERS = ['all', 'tailoring', 'readymade', 'fabric'] as const;
@@ -16,6 +16,7 @@ const SALE_TYPE_FILTERS = ['all', 'tailoring', 'readymade', 'fabric'] as const;
 export function Orders() {
   const data = useDashboardData();
   const settings = useSettings();
+  const { branch } = useSelectedBranch();
   const [orders, setOrders] = useState<Order[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<typeof STATUS_FILTERS[number]>('all');
@@ -33,7 +34,7 @@ export function Orders() {
   }, [data]);
 
   const filtered = useMemo(() => {
-    let r = orders;
+    let r = filterByBranch(orders, branch);
     if (filter !== 'all') r = r.filter((o) => o.status === filter);
     if (saleTypeFilter !== 'all') r = r.filter((o) => o.sale_type === saleTypeFilter);
     if (q) {
@@ -45,7 +46,7 @@ export function Orders() {
       );
     }
     return r;
-  }, [orders, filter, saleTypeFilter, q]);
+  }, [orders, branch, filter, saleTypeFilter, q]);
 
   function refresh() {
     supabase.from('orders').select('*').order('created_at', { ascending: false }).then(({ data: d }) => {
@@ -168,8 +169,14 @@ function OrderCard({ order, settings, salesmen, onClick }: {
           </div>
           <div className="flex items-center justify-between mt-2">
             <div>
-              <p className="text-xs text-slate-500">Balance</p>
-              <p className="font-bold text-sm">{fmtMoney(order.balance, currency)}</p>
+              <p className="text-xs text-slate-500">
+                {order.status === 'delivered' ? (order.payment_status === 'written_off' ? 'Written Off' : order.payment_status === 'outstanding' ? 'Outstanding' : 'Balance') : 'Balance'}
+              </p>
+              <p className={`font-bold text-sm ${order.status === 'delivered' && order.payment_status === 'written_off' ? 'text-rose-500' : order.status === 'delivered' && order.payment_status === 'outstanding' ? 'text-amber-500' : ''}`}>
+                {order.status === 'delivered'
+                  ? fmtMoney(order.payment_status === 'written_off' ? order.loss_amount : order.remaining_balance, currency)
+                  : fmtMoney(order.balance, currency)}
+              </p>
             </div>
             <div className="text-right">
               <p className="text-xs text-slate-500">Delivery</p>

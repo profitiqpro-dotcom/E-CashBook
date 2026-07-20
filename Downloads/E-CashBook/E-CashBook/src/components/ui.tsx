@@ -1,5 +1,6 @@
 import { type ReactNode, type ButtonHTMLAttributes, type InputHTMLAttributes, type TextareaHTMLAttributes, type SelectHTMLAttributes, useEffect } from 'react';
 import { X } from 'lucide-react';
+import type { PaymentAccount, Shop } from '../lib/types';
 
 export function Card({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <div className={`card ${className}`}>{children}</div>;
@@ -22,6 +23,29 @@ export function Select({ className = '', children, ...props }: SelectHTMLAttribu
   return <select className={`input ${className}`} {...props}>{children}</select>;
 }
 
+export function PaymentAccountSelect({ shops, accounts, value, onChange, className = '', placeholder = 'Select payment account' }: {
+  shops: Shop[]; accounts: PaymentAccount[]; value: string; onChange: (id: string) => void; className?: string; placeholder?: string;
+}) {
+  return (
+    <select className={`input ${className}`} value={value} onChange={(e) => onChange(e.target.value)}>
+      <option value="">{placeholder}</option>
+      {shops.map((shop) => {
+        const shopAccounts = accounts.filter((a) => a.shop_id === shop.id);
+        if (shopAccounts.length === 0) return null;
+        return (
+          <optgroup key={shop.id} label={shop.name}>
+            {shopAccounts.map((a) => (
+              <option key={a.id} value={a.id}>
+                {a.name}{a.type !== 'cash' ? ` (${a.type.toUpperCase()})` : ''}
+              </option>
+            ))}
+          </optgroup>
+        );
+      })}
+    </select>
+  );
+}
+
 export function Label({ children }: { children: ReactNode }) {
   return <label className="label">{children}</label>;
 }
@@ -35,7 +59,7 @@ export function Field({ label, children }: { label: string; children: ReactNode 
   );
 }
 
-export function Badge({ children, color = 'slate' }: { children: ReactNode; color?: 'slate' | 'red' | 'blue' | 'green' | 'amber' | 'sky' | 'rose' | 'emerald' }) {
+export function Badge({ children, color = 'slate', className = '' }: { children: ReactNode; color?: 'slate' | 'red' | 'blue' | 'green' | 'amber' | 'sky' | 'rose' | 'emerald'; className?: string }) {
   const map: Record<string, string> = {
     slate: 'bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300',
     red: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',
@@ -46,7 +70,7 @@ export function Badge({ children, color = 'slate' }: { children: ReactNode; colo
     rose: 'bg-rose-100 text-rose-700 dark:bg-rose-900/40 dark:text-rose-300',
     emerald: 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300',
   };
-  return <span className={`chip ${map[color] || map.slate}`}>{children}</span>;
+  return <span className={`chip ${map[color] || map.slate} ${className}`}>{children}</span>;
 }
 
 export function Modal({ open, onClose, title, children, footer, size = 'md' }: { open: boolean; onClose: () => void; title: string; children: ReactNode; footer?: ReactNode; size?: 'sm' | 'md' | 'lg' | 'xl' }) {
